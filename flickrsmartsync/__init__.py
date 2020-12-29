@@ -19,7 +19,7 @@ hdlr = SysLogHandler()
 formatter = logging.Formatter('flickrsmartsync %(message)s')
 hdlr.setFormatter(formatter)
 logger.addHandler(hdlr)
-logger.setLevel(logging.INFO)
+logger.setLevel(logging.DEBUG)
 
 
 def main():
@@ -56,8 +56,10 @@ def main():
                         help='for testing your custom sets, asks for confirmation when creating an album on flickr')
     parser.add_argument('--username', type=str,
                         help='token username')  # token username argument for api
-    parser.add_argument('--keyword', action='append', type=str,
+    parser.add_argument('--keyword', action='append', type=str, # DON'T USE THIS, it needs code change to work !!!!!!!!!!!!!!!!!
                         help='only upload files matching this keyword')
+    parser.add_argument('--manual-auth', action='store_true',
+                        help='authenticate in a different computer by browsing to an url and entering the returned code manually')
 
     args = parser.parse_args()
 
@@ -72,8 +74,11 @@ def main():
         logger.error('Sync path does not exists')
         exit(0)
 
+    logger.debug("running with args:{}".format(str(args)))
     local = Local(args)
     remote = Remote(args)
+    logger.debug("starting sync...")
     sync = Sync(args, local, remote)
     sync.start_sync()
+    logger.debug("all done.")
 

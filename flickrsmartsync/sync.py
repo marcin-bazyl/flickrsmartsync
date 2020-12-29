@@ -70,7 +70,7 @@ class Sync(object):
                 # download what doesn't exist locally
                 for photo in [photo for photo in remote_photos if photo not in local_photos]:
                     if self.cmd_args.dry_run:
-                        logger.info('Would download [%s] to [%s]' % (remote_photos[photo], local_photo_set))
+                        logger.info('Would download [%s] from %s to [%s]' % (photo, remote_photos[photo], local_photo_set))
                     else:
                         logger.info('Downloading [%s] to [%s]' % (remote_photos[photo], local_photo_set))
                         self.remote.download(remote_photos[photo], os.path.join(local_photo_set, photo))

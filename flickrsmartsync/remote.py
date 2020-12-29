@@ -2,7 +2,7 @@ from future import standard_library
 standard_library.install_aliases()
 from builtins import range
 from builtins import object
-import html.parser
+import html
 import json
 import os
 import re
@@ -21,7 +21,7 @@ SECRET = 'c329cdaf44c6d3f3'
 # number of retries for downloads
 RETRIES = 5
 
-PERMISSIONS = 'delete'
+PERMISSIONS = 'write' # delete
 
 class Remote(object):
 
@@ -41,7 +41,25 @@ class Remote(object):
             KEY, SECRET, username=self.cmd_args.username
         )
 
-        self.api.authenticate_via_browser(perms=PERMISSIONS)
+        if self.cmd_args.manual_auth:
+            self.manual_auth()
+        else:
+            self.api.authenticate_via_browser(perms=PERMISSIONS)
+
+    # Manual authentication from a different computer
+    def manual_auth(self):
+        # Only if the token is not valid
+        if not self.api.token_valid(PERMISSIONS):
+            self.api.get_request_token(oauth_callback='oob')
+            authorize_url = self.api.auth_url(perms=PERMISSIONS)
+
+            logger.info('url for authentication: %s' % authorize_url)
+            # Get the verifier code from the user. Do this however you
+            # want, as long as the user gives the application the code.
+            verifier = str(input('Verifier code: '))
+
+            # Trade the request token for an access token
+            self.api.get_access_token(verifier)
 
     # custom set builder
     def get_custom_set_title(self, path):
@@ -86,7 +104,7 @@ class Remote(object):
     # Get photos in a set
     def get_photos_in_set(self, folder, get_url=False):
         # bug on non utf8 machines dups
-        folder = folder.encode('utf-8') if isinstance(folder, str) else folder
+        # folder = folder.encode('utf-8') if isinstance(folder, str) else folder
 
         photos = {}
         # Always upload unix style
@@ -106,7 +124,7 @@ class Remote(object):
                     break
 
                 for photo in photos_in_set['photoset']['photo']:
-                    title = photo['title'].encode('utf-8')
+                    title = photo['title'] #.encode('utf-8')
                     # add missing extension if not present (take a guess as api original_format argument not working)
                     split = title.split(".")
                     # assume valid file extension is less than or equal to 5 characters and not all digits
@@ -121,8 +139,7 @@ class Remote(object):
                         sizes = json.loads(self.api.photos_getSizes(**photo_args))
                         if sizes['stat'] != 'ok':
                             continue
-
-                        original = [s for s in sizes['sizes']['size'] if s['label'].startswith('Video Original') and s['media'] == 'video']
+                        original = [s for s in sizes['sizes']['size'] if isinstance(s['label'], str) and s['label'].startswith('Video Original') and s['media'] == 'video']
                         if original:
                             photos[title] = original.pop()['source']
 
@@ -136,7 +153,6 @@ class Remote(object):
 
     def update_photo_sets_map(self):
         # Get your photosets online and map it to your local
-        html_parser = html.parser.HTMLParser()
         photosets_args = self.args.copy()
         page = 1
         self.photo_sets_map = {}
@@ -151,21 +167,24 @@ class Remote(object):
 
             for current_set in sets['photosets']['photoset']:
                 # Make sure it's the one from backup format
-                desc = html_parser.unescape(current_set['description']['_content'])
-                desc = desc.encode('utf-8') if isinstance(desc, str) else desc
+                desc = html.unescape(current_set['description']['_content'])
+                # desc = desc.encode('utf-8') if isinstance(desc, str) else desc
 
                 if self.cmd_args.fix_missing_description and not desc:
-                    current_set_title = html_parser.unescape(current_set['title']['_content'])
-                    current_set_title = current_set_title.encode('utf-8') if isinstance(current_set_title, str) else current_set_title
+                    current_set_title = html.unescape(current_set['title']['_content'])
+                    # current_set_title = current_set_title.encode('utf-8') if isinstance(current_set_title, str) else current_set_title
                     description_update_args = self.args.copy()
                     description_update_args.update({
                         'photoset_id': current_set['id'],
                         'title': current_set_title,
                         'description': current_set_title
                     })
-                    logger.info('Set has no description. Updating it to [%s]...' % current_set_title)
-                    json.loads(self.api.photosets_editMeta(**description_update_args))
-                    logger.info('done')
+                    if self.cmd_args.dry_run:
+                        logger.info('Would change the set %s description from <empty> to [%s]' % (current_set['id'], current_set_title))
+                    else:
+                        logger.info('Set has no description. Updating it to [%s]...' % current_set_title)
+                        json.loads(self.api.photosets_editMeta(**description_update_args))
+                        logger.info('done')
                     desc = current_set_title
 
                 if desc:
@@ -178,9 +197,12 @@ class Remote(object):
                             'title': title,
                             'description': desc
                         })
-                        logger.info('Updating custom title [%s]...', title)
-                        json.loads(self.api.photosets_editMeta(**update_args))
-                        logger.info('done')
+                        if self.cmd_args.dry_run:
+                            logger.info('Would change the set %s title from [%s] to [%s]' % (current_set['id'], current_set['title']['_content'], title))
+                        else:
+                            logger.info('Updating custom title [%s]...', title)
+                            json.loads(self.api.photosets_editMeta(**update_args))
+                            logger.info('done')
 
     def set_photo_date(self, file_path, photo_id):
         '''Set photo date_taken and date_posted to file mtime
@@ -221,7 +243,7 @@ class Remote(object):
             # (Optional) Set to 0 for no, 1 for yes. Specifies who can view the photo.
             'is_public': 0,
             'is_friend': 0,
-            'is_family': 0,
+            'is_family': 1,
             # (Optional) Set to 1 for Safe, 2 for Moderate, or 3 for Restricted.
             'safety_level': 1,
             # (Optional) Set to 1 for Photo, 2 for Screenshot, or 3 for Other.

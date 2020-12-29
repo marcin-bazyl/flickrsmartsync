@@ -43,10 +43,13 @@ class Local(object):
                                     logger.info('Skipped [%s] does not match any keyword %s' % (file, list(keywords)))
                                     continue
 
-                            photo_sets.setdefault(r, [])
+                            photo_sets.setdefault(r, {})
                             file_path = os.path.join(r, file)
                             file_stat = os.stat(file_path)
-                            photo_sets[r].append((file, file_stat))
+                            # we also need the filename without the extension (for lookups), because we don't know the extension of files already on flickr
+                            filename_without_ext, ext = os.path.splitext(file)
+                            
+                            photo_sets[r][filename_without_ext] = {'ext': ext, 'file_stat': file_stat}
 
         if skips_root:
             logger.warn('To avoid disorganization on flickr sets root photos are not synced, skipped these photos: %s' % skips_root)

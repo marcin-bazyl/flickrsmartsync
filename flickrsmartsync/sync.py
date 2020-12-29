@@ -11,6 +11,8 @@ EXT_VIDEO = ('avi', 'wmv', 'mov', 'mp4', '3gp', 'ogg', 'ogv', 'mts')
 VIDEO_MAX_SIZE = 1 * 1024 * 1024 * 1024 # 1GB
 IMAGE_MAX_SIZE = 200 * 1024 * 1024      # 200MB
 
+SKIPPED_REMOTE_SETS = ["Auto Upload"]  # these are skipped when doing sync (they're still downloaded if doing pure "download all"), WARNING: make sure you don't have a local folder with same name
+
 class Sync(object):
 
     def __init__(self, cmd_args, local, remote):
@@ -45,6 +47,11 @@ class Sync(object):
                 EXT_IMAGE + EXT_VIDEO
             )
             remote_photo_sets = self.remote.get_photo_sets()
+
+            for skipped_remote_set in SKIPPED_REMOTE_SETS:
+                logger.info('Skipping remote set [%s]' % (skipped_remote_set))
+                del remote_photo_sets[skipped_remote_set]
+
             # First download complete remote sets that are not local
             for remote_photo_set in remote_photo_sets:
                 local_photo_set = os.path.join(
@@ -52,7 +59,7 @@ class Sync(object):
                 ).replace("/", os.sep)
 
                 if local_photo_set not in local_photo_sets:
-                    # TODO: will generate info messages if photo_set is a prefix to other set names
+                    # TODO: will generate info messages if photo_set is a suffix to other set names
                     self.cmd_args.download = local_photo_set
                     self.download()
 
@@ -63,43 +70,44 @@ class Sync(object):
                     # doesn't exist remotely, so all files need uploading
                     remote_photos = {}
                 else:
-                    # filter by what exists remotely, this is a dict of filename->id
+                    # filter by what exists remotely, this is a dict of filename->{url, ext}
                     remote_photos = self.remote.get_photos_in_set(remote_photo_set, get_url=True)
-                local_photos = [photo for photo, file_stat in sorted(local_photo_sets[local_photo_set])]
+                local_photos = local_photo_sets[local_photo_set]
 
                 # download what doesn't exist locally
                 for photo in [photo for photo in remote_photos if photo not in local_photos]:
                     if self.cmd_args.dry_run:
-                        logger.info('Would download [%s] from %s to [%s]' % (photo, remote_photos[photo], local_photo_set))
+                        logger.info('Would download [%s] from %s to [%s] (ext=%s)' % (photo, remote_photos[photo]['url'], local_photo_set, remote_photos[photo]['ext']))
                     else:
-                        logger.info('Downloading [%s] to [%s]' % (remote_photos[photo], local_photo_set))
-                        self.remote.download(remote_photos[photo], os.path.join(local_photo_set, photo))
+                        logger.info('Downloading [%s] from %s to [%s] (ext=%s)' % (photo, remote_photos[photo]['url'], local_photo_set, remote_photos[photo]['ext']))
+                        self.remote.download(remote_photos[photo]['url'], os.path.join(local_photo_set, photo))
 
                 # upload what doesn't exist remotely
                 for photo in [photo for photo in local_photos if photo not in remote_photos]:
-                    file_path = os.path.join(local_photo_set, photo)
+                    file_path = os.path.join(local_photo_set, photo + local_photos[photo]['ext'])
                     file_stat = os.stat(file_path)
+                    file_extension = local_photos[photo]['ext'] # includes a dot at beginning
 
                     # Adds skips
-                    if self.cmd_args.ignore_images and photo.split('.').pop().lower() in EXT_IMAGE:
+                    if self.cmd_args.ignore_images and file_extension[1:].lower() in EXT_IMAGE:
                         continue
-                    elif self.cmd_args.ignore_videos and photo.split('.').pop().lower() in EXT_VIDEO:
+                    elif self.cmd_args.ignore_videos and file_extension[1:].lower() in EXT_VIDEO:
                         continue
 
                     # Skip files too large
-                    if file_stat.st_size >= IMAGE_MAX_SIZE and photo.split('.').pop().lower() in EXT_IMAGE:
+                    if file_stat.st_size >= IMAGE_MAX_SIZE and file_extension[1:].lower() in EXT_IMAGE:
                         logger.error('Skipped [%s] over image size limit' % photo)
                         continue
-                    if file_stat.st_size >= VIDEO_MAX_SIZE and photo.split('.').pop().lower() in EXT_VIDEO:
+                    if file_stat.st_size >= VIDEO_MAX_SIZE and file_extension[1:].lower() in EXT_VIDEO:
                         logger.error('Skipped [%s] over video size limit' % photo)
                         continue
 
                     display_title = self.remote.get_custom_set_title(local_photo_set)
                     if self.cmd_args.dry_run:
-                        logger.info('Would upload [%s] to set [%s]' % (photo, display_title))
+                        logger.info('Would upload [%s] to set [%s]' % (photo + file_extension, display_title))
                     else:
-                        logger.info('Uploading [%s] to set [%s]' % (photo, display_title))
-                        self.remote.upload(file_path, photo, remote_photo_set)
+                        logger.info('Uploading [%s] to set [%s]' % (photo + file_extension, display_title))
+                        self.remote.upload(file_path, photo + file_extension, remote_photo_set)
 
         else:
             logger.warning("Unsupported sync option: %s" % self.cmd_args.sync_from)
@@ -107,7 +115,7 @@ class Sync(object):
     def download(self):
         # Download to corresponding paths
         for photo_set in self.remote.get_photo_sets():
-            if photo_set and (self.cmd_args.download == '.' or photo_set.startswith(self.cmd_args.download)):
+            if photo_set and (self.cmd_args.download == '.' or self.cmd_args.download.endswith(photo_set)):
                 folder = os.path.join(self.cmd_args.sync_path, photo_set)
                 logger.info('Getting photos in set [%s]' % photo_set)
                 photos = self.remote.get_photos_in_set(photo_set, get_url=True)
@@ -117,18 +125,23 @@ class Sync(object):
 
                 for photo in photos:
                     # Adds skips
-                    if self.cmd_args.ignore_images and photo.split('.').pop().lower() in EXT_IMAGE:
+                    if self.cmd_args.ignore_images and photos[photo]['ext'][1:].lower() in EXT_IMAGE:
                         continue
-                    elif self.cmd_args.ignore_videos and photo.split('.').pop().lower() in EXT_VIDEO:
+                    elif self.cmd_args.ignore_videos and photos[photo]['ext'][1:].lower() in EXT_VIDEO:
                         continue
-                    path = os.path.join(folder, photo)
+                    path = os.path.join(folder, photo + photos[photo]['ext'])
+                    upper_case_ext_path = os.path.join(folder, photo + photos[photo]['ext'].upper())
+
                     if os.path.exists(path):
                         logger.debug('Skipped [%s/%s] already downloaded' % (photo_set, photo))
+                    elif os.path.exists(upper_case_ext_path):
+                        logger.debug('Skipped [%s/%s] already downloaded' % (photo_set, photo))
+                    # todo: for movies, try also avi/AVI/mov/MOV/3gp/3GP/mpg/MPG                                
                     elif self.cmd_args.dry_run:
-                        logger.info('Would download photo [%s/%s]' % (photo_set, photo))
+                        logger.info('Would download photo [%s/%s] to path [%s]' % (photo_set, photo, path))
                     else:
-                        logger.info('Downloading photo [%s/%s]' % (photo_set, photo))
-                        self.remote.download(photos[photo], path)
+                        logger.info('Downloading photo [%s/%s] to path [%s]' % (photo_set, photo, path))
+                        self.remote.download(photos[photo]['url'], path)
 
     def upload(self, specific_path=None):
         if specific_path is None:
@@ -156,30 +169,34 @@ class Sync(object):
             photos = self.remote.get_photos_in_set(folder)
             logger.info('Found %s photos' % len(photos))
 
-            for photo, file_stat in sorted(photo_sets[photo_set]):
+            for photo in photo_sets[photo_set]:
+                file_extension = photo_sets[photo_set][photo]['ext'] # includes a dot at beginning
+                file_stat = photo_sets[photo_set][photo]['file_stat']
+                photo_with_extension = photo + file_extension
+
                 # Adds skips
-                if self.cmd_args.ignore_images and photo.split('.').pop().lower() in EXT_IMAGE:
+                if self.cmd_args.ignore_images and file_extension[1:].lower() in EXT_IMAGE:
                     continue
-                elif self.cmd_args.ignore_videos and photo.split('.').pop().lower() in EXT_VIDEO:
+                elif self.cmd_args.ignore_videos and file_extension[1:].lower() in EXT_VIDEO:
                     continue
 
                 if photo in photos or self.cmd_args.is_windows and photo.replace(os.sep, '/') in photos:
-                    logger.debug('Skipped [%s] already exists in set [%s]' % (photo, display_title))
+                    logger.debug('Skipped [%s] already exists in set [%s]' % (photo_with_extension, display_title))
                 else:
                     # Skip files too large
-                    if file_stat.st_size >= IMAGE_MAX_SIZE and photo.split('.').pop().lower() in EXT_IMAGE:
-                        logger.error('Skipped [%s] over image size limit' % photo)
+                    if file_stat.st_size >= IMAGE_MAX_SIZE and file_extension[1:].lower() in EXT_IMAGE:
+                        logger.error('Skipped [%s] over image size limit' % photo_with_extension)
                         continue
-                    if file_stat.st_size >= VIDEO_MAX_SIZE and photo.split('.').pop().lower() in EXT_VIDEO:
-                        logger.error('Skipped [%s] over video size limit' % photo)
+                    if file_stat.st_size >= VIDEO_MAX_SIZE and file_extension[1:].lower() in EXT_VIDEO:
+                        logger.error('Skipped [%s] over video size limit' % photo_with_extension)
                         continue
 
                     if self.cmd_args.dry_run:
-                        logger.info('Would upload [%s] to set [%s]' % (photo, display_title))
+                        logger.info('Would upload [%s] to set [%s]' % (photo_with_extension, display_title))
                         continue
 
-                    logger.info('Uploading [%s] to set [%s]' % (photo, display_title))
-                    file_path = os.path.join(photo_set, photo)
-                    photo_id = self.remote.upload(file_path, photo, folder)
+                    logger.info('Uploading [%s] to set [%s]' % (photo_with_extension, display_title))
+                    file_path = os.path.join(photo_set, photo_with_extension)
+                    photo_id = self.remote.upload(file_path, photo_with_extension, folder)
                     if photo_id:
-                        photos[photo] = photo_id
+                        photos[photo] = {'url': photo_id, 'ext': file_extension}

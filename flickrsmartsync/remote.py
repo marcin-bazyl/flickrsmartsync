@@ -125,14 +125,20 @@ class Remote(object):
 
                 for photo in photos_in_set['photoset']['photo']:
                     title = photo['title'] #.encode('utf-8')
+                    extension = "" # if the title is missing the extenstion, then we guess it and put it here
                     # add missing extension if not present (take a guess as api original_format argument not working)
                     split = title.split(".")
                     # assume valid file extension is less than or equal to 5 characters and not all digits
                     if len(split) < 2 or len(split[-1]) > 5 or split[-1].isdigit():
                         if photo.get('media') == 'video':
-                            title += ".mp4"
+                            extension = ".mp4"
                         else:
-                            title += ".jpg"
+                            extension = ".jpg"
+                    else:
+                        # because of all our problems with missing extensions, we always want to keep title without extension in our lookups and keep extension separately
+                        extension = "." + split[-1]
+                        title = title[:-(len(split[-1])+1)]
+
                     if get_url and photo.get('media') == 'video':
                         photo_args = self.args.copy()
                         photo_args['photo_id'] = photo['id']
@@ -141,10 +147,10 @@ class Remote(object):
                             continue
                         original = [s for s in sizes['sizes']['size'] if isinstance(s['label'], str) and s['label'].startswith('Video Original') and s['media'] == 'video']
                         if original:
-                            photos[title] = original.pop()['source']
+                            photos[title] = {'url': original.pop()['source'], 'ext': extension}
 
                     else:
-                        photos[title] = photo['url_o'] if get_url else photo['id']
+                        photos[title] = {'url': photo['url_o'] if get_url else photo['id'], 'ext': extension}
 
         return photos
 
@@ -243,7 +249,7 @@ class Remote(object):
             # (Optional) Set to 0 for no, 1 for yes. Specifies who can view the photo.
             'is_public': 0,
             'is_friend': 0,
-            'is_family': 1,
+            'is_family': 0,
             # (Optional) Set to 1 for Safe, 2 for Moderate, or 3 for Restricted.
             'safety_level': 1,
             # (Optional) Set to 1 for Photo, 2 for Screenshot, or 3 for Other.

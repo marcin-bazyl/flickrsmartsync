@@ -6,6 +6,7 @@ import html
 import json
 import os
 import re
+import time
 import urllib.request, urllib.parse, urllib.error
 import flickrapi
 import logging
@@ -15,11 +16,13 @@ import exifread
 logger = logging.getLogger("flickrsmartsync")
 
 #  flickr api keys
-KEY = 'f7da21662566bc773c7c750ddf7030f7'
-SECRET = 'c329cdaf44c6d3f3'
+KEY = '' # todo: read it from env var or somewhere... # 'f7da21662566bc773c7c750ddf7030f7'
+SECRET = '' # todo: read it from env var or somewhere... # 'c329cdaf44c6d3f3'
+
+SKIPPED_REMOTE_SETS = ["Auto Upload", "Gosia-temp"]  # these are skipped when doing sync (they're still downloaded if doing pure "download all"), WARNING: make sure you don't have a local folder with same name
 
 # number of retries for downloads
-RETRIES = 5
+RETRIES = 3
 
 PERMISSIONS = 'write' # delete
 
@@ -61,19 +64,9 @@ class Remote(object):
             # Trade the request token for an access token
             self.api.get_access_token(verifier)
 
-    # custom set builder
-    def get_custom_set_title(self, path):
+    def get_photo_set_title_from_path(self, path):
         title = path.split('/').pop()
 
-        if self.cmd_args.custom_set:
-            m = re.match(self.cmd_args.custom_set, path)
-            if m:
-                if not self.cmd_args.custom_set_builder:
-                    title = '-'.join(m.groups())
-                elif m.groupdict():
-                    title = self.cmd_args.custom_set_builder.format(**m.groupdict())
-                else:
-                    title = self.cmd_args.custom_set_builder.format(*m.groups())
         return title
 
     # For adding photo to set
@@ -85,13 +78,13 @@ class Remote(object):
 
         if folder not in self.photo_sets_map:
             photosets_args = self.args.copy()
-            custom_title = self.get_custom_set_title(self.cmd_args.sync_path + folder)
+            title = self.get_photo_set_title_from_path(self.cmd_args.sync_path + folder)
             photosets_args.update({'primary_photo_id': photo_id,
-                                   'title': custom_title,
+                                   'title': title,
                                    'description': folder})
             photo_set = json.loads(self.api.photosets_create(**photosets_args))
             self.photo_sets_map[folder] = photo_set['photoset']['id']
-            logger.info('Created set [%s] and added photo' % custom_title)
+            logger.info('Created set [%s] and added photo' % title)
         else:
             photosets_args = self.args.copy()
             photosets_args.update({'photoset_id': self.photo_sets_map.get(folder), 'photo_id': photo_id})
@@ -114,15 +107,21 @@ class Remote(object):
         if folder in self.photo_sets_map:
             photoset_args = self.args.copy()
             page = 1
-            while True:
+            num_pages = 1
+            while page <= num_pages:
                 photoset_args.update({'photoset_id': self.photo_sets_map[folder], 'page': page})
                 if get_url:
                     photoset_args['extras'] = 'url_o,media'
-                page += 1
+                logger.info("getting list of photos from flickr for set [{}] args={}".format(folder, photoset_args))
                 photos_in_set = json.loads(self.api.photosets_getPhotos(**photoset_args))
+                
                 if photos_in_set['stat'] != 'ok':
                     break
 
+                num_pages = photos_in_set['photoset']['pages']
+                page += 1
+
+                # todo: use photos_in_set['photoset']['page'] < photos_in_set['photoset']['pages']
                 for photo in photos_in_set['photoset']['photo']:
                     title = photo['title'] #.encode('utf-8')
                     extension = "" # if the title is missing the extenstion, then we guess it and put it here
@@ -164,7 +163,7 @@ class Remote(object):
         self.photo_sets_map = {}
 
         while True:
-            logger.debug('Getting photosets page %s' % page)
+            logger.debug('Getting photosets from flickr... page %s' % page)
             photosets_args.update({'page': page, 'per_page': 500})
             sets = json.loads(self.api.photosets_getList(**photosets_args))
             page += 1
@@ -172,43 +171,15 @@ class Remote(object):
                 break
 
             for current_set in sets['photosets']['photoset']:
-                # Make sure it's the one from backup format
-                desc = html.unescape(current_set['description']['_content'])
-                # desc = desc.encode('utf-8') if isinstance(desc, str) else desc
+                current_set_title = html.unescape(current_set['title']['_content'])
+                # current_set_title = current_set_title.encode('utf-8') if isinstance(current_set_title, str) else current_set_title
 
-                if self.cmd_args.fix_missing_description and not desc:
-                    current_set_title = html.unescape(current_set['title']['_content'])
-                    # current_set_title = current_set_title.encode('utf-8') if isinstance(current_set_title, str) else current_set_title
-                    description_update_args = self.args.copy()
-                    description_update_args.update({
-                        'photoset_id': current_set['id'],
-                        'title': current_set_title,
-                        'description': current_set_title
-                    })
-                    if self.cmd_args.dry_run:
-                        logger.info('Would change the set %s description from <empty> to [%s]' % (current_set['id'], current_set_title))
-                    else:
-                        logger.info('Set has no description. Updating it to [%s]...' % current_set_title)
-                        json.loads(self.api.photosets_editMeta(**description_update_args))
-                        logger.info('done')
-                    desc = current_set_title
+                if current_set_title:
+                    self.photo_sets_map[current_set_title] = current_set['id']
 
-                if desc:
-                    self.photo_sets_map[desc] = current_set['id']
-                    title = self.get_custom_set_title(self.cmd_args.sync_path + desc)
-                    if self.cmd_args.update_custom_set and title != current_set['title']['_content']:
-                        update_args = self.args.copy()
-                        update_args.update({
-                            'photoset_id': current_set['id'],
-                            'title': title,
-                            'description': desc
-                        })
-                        if self.cmd_args.dry_run:
-                            logger.info('Would change the set %s title from [%s] to [%s]' % (current_set['id'], current_set['title']['_content'], title))
-                        else:
-                            logger.info('Updating custom title [%s]...', title)
-                            json.loads(self.api.photosets_editMeta(**update_args))
-                            logger.info('done')
+            for skipped_remote_set in SKIPPED_REMOTE_SETS:
+                logger.info('Skipping remote set [%s]' % (skipped_remote_set))
+                del self.photo_sets_map[skipped_remote_set]
 
     def set_photo_date(self, file_path, photo_id):
         '''Set photo date_taken and date_posted to file mtime
@@ -231,7 +202,7 @@ class Remote(object):
         except Exception as e:
             print (e)
 
-        date_iso = utc_time.isoformat(' ')
+        date_iso = utc_time.isoformat(' ')  # this is wrong it gives '2020-12-28 21:52:23.330000' while flickr accepts only up to seconds, so 2020-12-28 21:52:23, but we don't need this anyway
 
         self.api.photos.setDates(
             photo_id=photo_id,
@@ -258,17 +229,21 @@ class Remote(object):
             'hidden': 2
         }
 
-        for _ in range(RETRIES):
+        for retry in range(RETRIES):
             try:
                 upload = self.api.upload(file_path, None, **upload_args)
                 photo_id = upload.find('photoid').text
-                self.set_photo_date(file_path, photo_id)
-                self.add_to_photo_set(photo_id, folder)
+                # self.set_photo_date(file_path, photo_id)  - we don't need this, as flickr already extracts date taken from exif data
+                self.add_to_photo_set(photo_id, folder) # todo: if it fails on this step the retry uploads the duplicate file unnecesarily
                 return photo_id
             except Exception as e:
-                logger.warning("Retrying upload of %s/%s after error: %s" % (folder, photo, e))
+                back_off = 2**(retry + 3)
+                logger.warning("Retrying (after delay of {} seconds) upload of {}/{} after error: {}".format(back_off, folder, photo, e))
+                time.sleep(back_off)
+                
 
         logger.error("Failed upload of %s/%s after %d retries" % (folder, photo, RETRIES))
+        exit(0)
 
     def download(self, url, path):
         folder = os.path.dirname(path)

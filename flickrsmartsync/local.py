@@ -17,9 +17,11 @@ class Local(object):
         photo_sets = {}
         skips_root = []
         keywords = set(self.cmd_args.keyword) if self.cmd_args.keyword else ()
-
+        
+        logger.info('Building list of local photos...')
+        
         for r, dirs, files in os.walk(path, followlinks=True):
-
+            logger.info('Analysing local dir [{}]'.format(r))
             if self.cmd_args.starts_with and not r.startswith('{}{}'.format(self.cmd_args.sync_path, self.cmd_args.starts_with)):
                 continue
 

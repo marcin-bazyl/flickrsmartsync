@@ -29,7 +29,7 @@ class fakeRemote(object):
         self.files = {"12345": {"file3.jpg": 23, "file4.avi": 23}}
     def get_photo_sets(self):
         return self.photo_sets_map
-    def get_custom_set_title(self, path):
+    def get_photo_set_title_from_path(self, path):
         return path.split('/').pop()
     def get_photos_in_set(self, folder, get_url=False):
         return self.files[self.photo_sets_map[folder]]

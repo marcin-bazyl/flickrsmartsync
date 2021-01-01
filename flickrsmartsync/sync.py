@@ -11,8 +11,6 @@ EXT_VIDEO = ('avi', 'wmv', 'mov', 'mp4', '3gp', 'ogg', 'ogv', 'mts')
 VIDEO_MAX_SIZE = 1 * 1024 * 1024 * 1024 # 1GB
 IMAGE_MAX_SIZE = 200 * 1024 * 1024      # 200MB
 
-SKIPPED_REMOTE_SETS = ["Auto Upload"]  # these are skipped when doing sync (they're still downloaded if doing pure "download all"), WARNING: make sure you don't have a local folder with same name
-
 class Sync(object):
 
     def __init__(self, cmd_args, local, remote):
@@ -48,10 +46,6 @@ class Sync(object):
             )
             remote_photo_sets = self.remote.get_photo_sets()
 
-            for skipped_remote_set in SKIPPED_REMOTE_SETS:
-                logger.info('Skipping remote set [%s]' % (skipped_remote_set))
-                del remote_photo_sets[skipped_remote_set]
-
             # First download complete remote sets that are not local
             for remote_photo_set in remote_photo_sets:
                 local_photo_set = os.path.join(
@@ -66,7 +60,9 @@ class Sync(object):
             # Now walk our local sets
             for local_photo_set in sorted(local_photo_sets):
                 remote_photo_set = local_photo_set.replace(self.cmd_args.sync_path, '').replace("/", os.sep)
+                logger.info('Syncing local folder [{}]'.format(local_photo_set))
                 if remote_photo_set not in remote_photo_sets:
+                    logger.info('Set [{}] not among remote photo sets, all of the photos will be uploaded'.format(remote_photo_set))
                     # doesn't exist remotely, so all files need uploading
                     remote_photos = {}
                 else:
@@ -80,7 +76,7 @@ class Sync(object):
                         logger.info('Would download [%s] from %s to [%s] (ext=%s)' % (photo, remote_photos[photo]['url'], local_photo_set, remote_photos[photo]['ext']))
                     else:
                         logger.info('Downloading [%s] from %s to [%s] (ext=%s)' % (photo, remote_photos[photo]['url'], local_photo_set, remote_photos[photo]['ext']))
-                        self.remote.download(remote_photos[photo]['url'], os.path.join(local_photo_set, photo))
+                        self.remote.download(remote_photos[photo]['url'], os.path.join(local_photo_set, photo + remote_photos[photo]['ext']))
 
                 # upload what doesn't exist remotely
                 for photo in [photo for photo in local_photos if photo not in remote_photos]:
@@ -102,7 +98,7 @@ class Sync(object):
                         logger.error('Skipped [%s] over video size limit' % photo)
                         continue
 
-                    display_title = self.remote.get_custom_set_title(local_photo_set)
+                    display_title = self.remote.get_photo_set_title_from_path(local_photo_set)
                     if self.cmd_args.dry_run:
                         logger.info('Would upload [%s] to set [%s]' % (photo + file_extension, display_title))
                     else:
@@ -151,20 +147,11 @@ class Sync(object):
         photo_sets = self.local.build_photo_sets(only_dir, EXT_IMAGE + EXT_VIDEO)
         logger.info('Found %s photo sets' % len(photo_sets))
 
-        if specific_path is None:
-            # Show custom set titles
-            if self.cmd_args.custom_set:
-                for photo_set in photo_sets:
-                    logger.info('Set Title: [%s]  Path: [%s]' % (self.remote.get_custom_set_title(photo_set), photo_set))
-
-                if self.cmd_args.custom_set_debug and input('Is this your expected custom set titles (y/n):') != 'y':
-                    exit(0)
-
         # Loop through all local photo set map and
         # upload photos that does not exists in online map
         for photo_set in sorted(photo_sets):
             folder = photo_set.replace(self.cmd_args.sync_path, '')
-            display_title = self.remote.get_custom_set_title(photo_set)
+            display_title = self.remote.get_photo_set_title_from_path(photo_set)
             logger.info('Getting photos in set [%s]' % display_title)
             photos = self.remote.get_photos_in_set(folder)
             logger.info('Found %s photos' % len(photos))

@@ -26,6 +26,8 @@ RETRIES = 3
 
 PERMISSIONS = 'write' # delete
 
+VIDEO_FAKE_URL_PREFIX='PHOTO_ID='
+
 class Remote(object):
 
     def __init__(self, cmd_args):
@@ -139,14 +141,9 @@ class Remote(object):
                         title = title[:-(len(split[-1])+1)]
 
                     if get_url and photo.get('media') == 'video':
-                        photo_args = self.args.copy()
-                        photo_args['photo_id'] = photo['id']
-                        sizes = json.loads(self.api.photos_getSizes(**photo_args))
-                        if sizes['stat'] != 'ok':
-                            continue
-                        original = [s for s in sizes['sizes']['size'] if isinstance(s['label'], str) and s['label'].startswith('Video Original') and s['media'] == 'video']
-                        if original:
-                            photos[title] = {'url': original.pop()['source'], 'ext': extension}
+                        # for videos we have to do an extra API call to get the url and we don't want to do it unless we are actually downloading that video,
+                        # so just put the photo id into the url for now and it will be used by the download() method
+                        photos[title] = {'url': VIDEO_FAKE_URL_PREFIX + photo['id'], 'ext': extension}
 
                     else:
                         photos[title] = {'url': photo['url_o'] if get_url else photo['id'], 'ext': extension}
@@ -249,6 +246,23 @@ class Remote(object):
         folder = os.path.dirname(path)
         if not os.path.isdir(folder):
             os.makedirs(folder)
+
+        if (url.startswith(VIDEO_FAKE_URL_PREFIX)):  # special case for videos
+            photo_args = self.args.copy()
+            photo_args['photo_id'] = url[len(VIDEO_FAKE_URL_PREFIX):]
+            sizes = json.loads(self.api.photos_getSizes(**photo_args))
+            if sizes['stat'] != 'ok':
+                logger.error("Flickr API call photos.getSizes() failed for a video with photo_id={}".format(photo_args['photo_id']))
+                return
+
+            original = [s for s in sizes['sizes']['size'] if isinstance(s['label'], str) and s['label'].startswith('Video Original') and s['media'] == 'video']
+            if original:
+                url = original.pop()['source']
+            else:
+                logger.error("Flickr API call photos.getSizes() for a video with photo_id={} didn't return a 'Video Original' url".format(photo_args['photo_id']))
+                return
+
+
         for i in range(RETRIES):
             try:
                 return urllib.request.urlretrieve(url, path)

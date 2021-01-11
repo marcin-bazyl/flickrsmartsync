@@ -86,7 +86,7 @@ class Remote(object):
                                    'description': folder})
             photo_set = json.loads(self.api.photosets_create(**photosets_args))
             self.photo_sets_map[folder] = photo_set['photoset']['id']
-            logger.info('Created set [%s] and added photo' % title)
+            logger.info('Successfully created set [%s] and added photo' % title)
         else:
             photosets_args = self.args.copy()
             photosets_args.update({'photoset_id': self.photo_sets_map.get(folder), 'photo_id': photo_id})
@@ -265,7 +265,7 @@ class Remote(object):
 
         for i in range(RETRIES):
             try:
-                return urllib.request.urlretrieve(url, path)
+                return urllib.request.urlretrieve(url, path)    # this doesn't work for video, because it's unauthenticated flickr doesn't give us the original video
             except Exception as e:
                 logger.warning("Retrying download of %s after error: %s" % (path, e))
         # failed many times
